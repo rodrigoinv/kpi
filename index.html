@@ -208,13 +208,13 @@
     </div>
     <span class="upload-badge" id="maestra-status" style="color:#e3b341;background:rgba(227,179,65,.1);">⏳ Cargando…</span>
   </div>
-  <div class="upload-banner" style="flex:1;margin:0;cursor:default;">
-    <span style="font-size:20px">📦</span>
+  <div class="upload-banner" style="flex:1;margin:0;cursor:default;border-color:#2ea04388;">
+    <span style="font-size:20px">📊</span>
     <div class="upload-text">
-      <strong>Stock Diario</strong><br>
-      Se carga automáticamente desde GitHub
+      <strong style="color:#56d364">Stock Diario</strong><br>
+      Se carga automáticamente desde Google Sheets
     </div>
-    <span class="upload-badge" id="upload-status">⏳ Cargando…</span>
+    <span class="upload-badge" id="upload-status" style="color:#56d364;background:rgba(46,160,67,.1);">⏳ Cargando…</span>
   </div>
   <!-- Manual override (hidden, advanced use) -->
   <label class="upload-banner" for="file-stock-manual" style="flex:0 0 auto;margin:0;padding:12px 16px;cursor:pointer;" title="Cargar stock manual">
@@ -328,29 +328,54 @@ function fmt1(n)   { return (+n).toLocaleString('es',{minimumFractionDigits:1,ma
 function fmtPct(n) { return fmt1(n)+'%'; }
 function pct(n,t)  { return t ? +(n/t*100).toFixed(1) : 0; }
 
-// GitHub config
+// ── Google Sheets CSV URL (stock diario) ──
+const STOCK_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vR-ERjdl9ZjJqP5RVd6bXc5_vFrEY1VonudOpc_t2EqJiCceJVNcqC1D-28bmgSxA/pub?gid=1527702241&single=true&output=csv';
+
+// GitHub config (maestra sigue en GitHub)
 const GITHUB_USER   = 'rodrigoinv';
 const GITHUB_REPO   = 'kpi';
 const GITHUB_BRANCH = 'main';
-const MAESTRA_FILE  = 'Maestra.xlsx';
-const STOCK_FILE    = 'stock.xlsx';
+const MAESTRA_FILE  = 'Maestra.csv';
 
-async function fetchXlsxFromGitHub(filename) {
-  // jsDelivr proxies GitHub without CORS, supports files up to 50MB
-  const url = `https://cdn.jsdelivr.net/gh/${GITHUB_USER}/${GITHUB_REPO}@${GITHUB_BRANCH}/${filename}`;
+// Parse CSV text into array of objects
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,''));
+  return lines.slice(1).map(line => {
+    const vals = []; let cur = ''; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQ = !inQ; }
+      else if (c === ',' && !inQ) { vals.push(cur); cur = ''; }
+      else { cur += c; }
+    }
+    vals.push(cur);
+    const obj = {};
+    headers.forEach((h,i) => { obj[h] = vals[i] !== undefined ? vals[i].trim() : ''; });
+    return obj;
+  });
+}
+
+async function fetchCSV(url) {
+  // Use allorigins proxy to avoid CORS on Google Sheets
+  const proxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url) + '&t=' + Date.now();
+  const res = await fetch(proxy);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return parseCSV(await res.text());
+}
+
+async function fetchMaestra() {
+  const url = 'https://raw.githubusercontent.com/' + GITHUB_USER + '/' + GITHUB_REPO + '/' + GITHUB_BRANCH + '/' + MAESTRA_FILE;
   const res = await fetch(url + '?t=' + Date.now());
-  if (!res.ok) throw new Error(`HTTP ${res.status} para ${filename}`);
-  const buf = await res.arrayBuffer();
-  const wb = XLSX.read(new Uint8Array(buf), {type: 'array'});
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(ws, {raw: true});
+  if (!res.ok) throw new Error('HTTP ' + res.status + ' para ' + MAESTRA_FILE);
+  return parseCSV(await res.text());
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
   // ── Load Maestra from GitHub ──
   try {
     document.getElementById('maestra-status').textContent = '⏳ Cargando maestra…';
-    const maestraRows = await fetchXlsxFromGitHub(MAESTRA_FILE);
+    const maestraRows = await fetchMaestra();
     if (!maestraRows.length || !maestraRows[0].hasOwnProperty('almacen'))
       throw new Error('Formato incorrecto');
     MAESTRA.clear();
@@ -373,11 +398,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   // ── Load Stock from GitHub ──
   try {
     document.getElementById('upload-status').textContent = '⏳ Cargando stock…';
-    const stockRows = await fetchXlsxFromGitHub(STOCK_FILE);
+    const stockRows = await fetchCSV(STOCK_SHEET_URL);
     if (!stockRows.length || !stockRows[0].hasOwnProperty('almacen'))
       throw new Error('Formato incorrecto');
     LAST_STOCK_ROWS = stockRows;
-    document.getElementById('upload-status').textContent = '● '+stockRows.length.toLocaleString()+' filas — '+STOCK_FILE;
+    document.getElementById('upload-status').textContent = '● '+stockRows.length.toLocaleString()+' filas — Google Sheets';
     mergeAndRender(stockRows);
   } catch(err) {
     document.getElementById('upload-status').textContent = '⚠ Sin stock GitHub — datos embebidos';
