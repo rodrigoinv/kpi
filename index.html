@@ -339,21 +339,40 @@ const MAESTRA_FILE  = 'Maestra.csv';
 
 // Parse CSV text into array of objects
 function parseCSV(text) {
-  const lines = text.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,''));
-  return lines.slice(1).map(line => {
+  // Normalize line endings, remove BOM
+  text = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/^\uFEFF/,'');
+  const allLines = text.split('\n').filter(l => l.trim());
+  if (!allLines.length) return [];
+
+  // Find header row — the one containing 'almacen'
+  let headerIdx = 0;
+  for (let i = 0; i < Math.min(5, allLines.length); i++) {
+    if (allLines[i].toLowerCase().includes('almacen')) { headerIdx = i; break; }
+  }
+
+  function splitLine(line) {
     const vals = []; let cur = ''; let inQ = false;
     for (let i = 0; i < line.length; i++) {
       const c = line[i];
       if (c === '"') { inQ = !inQ; }
-      else if (c === ',' && !inQ) { vals.push(cur); cur = ''; }
+      else if (c === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
+      else if (c === '\t' && !inQ) { vals.push(cur.trim()); cur = ''; }
       else { cur += c; }
     }
-    vals.push(cur);
+    vals.push(cur.trim());
+    return vals;
+  }
+
+  const headers = splitLine(allLines[headerIdx]).map(h =>
+    h.replace(/^"|"$/g,'').trim().toLowerCase()
+  );
+
+  return allLines.slice(headerIdx + 1).map(line => {
+    const vals = splitLine(line);
     const obj = {};
-    headers.forEach((h,i) => { obj[h] = vals[i] !== undefined ? vals[i].trim() : ''; });
+    headers.forEach((h,i) => { obj[h] = vals[i] !== undefined ? vals[i].replace(/^"|"$/g,'').trim() : ''; });
     return obj;
-  });
+  }).filter(r => r.almacen); // skip empty rows
 }
 
 async function fetchCSV(url) {
@@ -764,10 +783,27 @@ function handleFileUpload(event){
 // If no maestra → use stock directly (original behavior).
 function mergeAndRender(rows){
   const stockMap={};
+
+  // Normalize columna: pad numeric values with leading zeros to 3 digits
+  // Google Sheets strips leading zeros: "001" becomes "1", "009" becomes "9"
+  function normColumna(val) {
+    const s = String(val||'').trim();
+    // If purely numeric, zero-pad to 3 digits
+    if (/^\d+$/.test(s)) return s.padStart(3, '0');
+    return s; // alphanumeric like "PUL", "TEM", "AAA" stay as-is
+  }
+
   rows.forEach(r=>{
-    const key=[String(r.almacen),String(r.estante),String(r.columna),String(r.nivel)].join('|');
-    if(!stockMap[key]) stockMap[key]=[];
-    stockMap[key].push(r);
+    const key=[
+      String(r.almacen||'').trim(),
+      String(r.estante||'').trim(),
+      normColumna(r.columna),
+      String(r.nivel||'').trim()
+    ].join('|');
+    if(key.replace(/\|/g,'').length>0){
+      if(!stockMap[key]) stockMap[key]=[];
+      stockMap[key].push(r);
+    }
   });
 
   let newData;
@@ -796,8 +832,9 @@ function mergeAndRender(rows){
 
 // ── BUILD ONE LOCATION RECORD ──
 function buildLocationRecord(loc, stockRows){
-  const totalPallets=stockRows.reduce((s,r)=>s+(+r.pallets||0),0);
-  const totalStock  =stockRows.reduce((s,r)=>s+(+r.ubcstk||0),0);
+  // CSV returns strings — coerce to numbers
+  const totalPallets=stockRows.reduce((s,r)=>s+(parseFloat(r.pallets)||0),0);
+  const totalStock  =stockRows.reduce((s,r)=>s+(parseFloat(r.ubcstk)||0),0);
   const skuSet=new Set(stockRows.map(r=>r.ubprod).filter(Boolean));
   const pctVal=+Math.min(100,totalPallets*100).toFixed(1);
   const ubesta=stockRows.length>0?(stockRows[0].ubesta||'S'):'L';
