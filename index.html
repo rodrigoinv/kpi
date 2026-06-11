@@ -328,66 +328,70 @@ function fmt1(n)   { return (+n).toLocaleString('es',{minimumFractionDigits:1,ma
 function fmtPct(n) { return fmt1(n)+'%'; }
 function pct(n,t)  { return t ? +(n/t*100).toFixed(1) : 0; }
 
-// GitHub raw URLs — must match repo structure
-const GITHUB_USER = 'rodrigoinv';
-const GITHUB_REPO = 'kpi';
+// GitHub config
+const GITHUB_USER   = 'rodrigoinv';
+const GITHUB_REPO   = 'kpi';
 const GITHUB_BRANCH = 'main';
-const MAESTRA_FILE = 'Maestra.xlsx';
-const STOCK_FILE   = 'stock.xlsx';
+const MAESTRA_FILE  = 'Maestra.xlsx';
+const STOCK_FILE    = 'stock.xlsx';
 
-function githubRaw(filename) {
-  return `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${filename}`;
-}
-
-async function fetchXlsxFromGitHub(url) {
-  const res = await fetch(url + '?t=' + Date.now()); // cache-bust
-  if (!res.ok) throw new Error(`HTTP ${res.status} al cargar ${url}`);
-  const buf = await res.arrayBuffer();
-  const wb  = XLSX.read(buf, {type:'array'});
-  const ws  = wb.Sheets[wb.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(ws, {raw:true});
+async function fetchXlsxFromGitHub(filename) {
+  // Use GitHub Contents API — returns base64 encoded file, no CORS issues
+  const apiUrl = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${filename}?ref=${GITHUB_BRANCH}`;
+  const res = await fetch(apiUrl, {
+    headers: { 'Accept': 'application/vnd.github.v3+json' }
+  });
+  if (!res.ok) throw new Error(`GitHub API: HTTP ${res.status} para ${filename}`);
+  const json = await res.json();
+  if (!json.content) throw new Error(`Sin contenido en ${filename}`);
+  // Decode base64 → binary → XLSX
+  const b64 = json.content.replace(/\n/g, '');
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const wb = XLSX.read(bytes, {type: 'array'});
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(ws, {raw: true});
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
-  // Try to auto-load from GitHub
+  // ── Load Maestra from GitHub ──
   try {
-    // Load maestra
     document.getElementById('maestra-status').textContent = '⏳ Cargando maestra…';
-    const maestraRows = await fetchXlsxFromGitHub(githubRaw(MAESTRA_FILE));
-    if (maestraRows.length && maestraRows[0].hasOwnProperty('almacen')) {
-      MAESTRA.clear();
-      maestraRows.forEach(r => {
-        const key = [String(r.almacen),String(r.estante),String(r.columna),String(r.nivel)].join('|');
-        if (!MAESTRA.has(key)) MAESTRA.set(key, {
-          almacen:String(r.almacen), estante:String(r.estante),
-          columna:String(r.columna), nivel:String(r.nivel),
-          categoria_ubicacion:r.categoria_ubicacion||''
-        });
+    const maestraRows = await fetchXlsxFromGitHub(MAESTRA_FILE);
+    if (!maestraRows.length || !maestraRows[0].hasOwnProperty('almacen'))
+      throw new Error('Formato incorrecto');
+    MAESTRA.clear();
+    maestraRows.forEach(r => {
+      const key = [String(r.almacen),String(r.estante),String(r.columna),String(r.nivel)].join('|');
+      if (!MAESTRA.has(key)) MAESTRA.set(key, {
+        almacen:String(r.almacen), estante:String(r.estante),
+        columna:String(r.columna), nivel:String(r.nivel),
+        categoria_ubicacion:r.categoria_ubicacion||''
       });
-      document.getElementById('maestra-status').textContent = '● ' + MAESTRA.size.toLocaleString() + ' ubicaciones';
-      document.getElementById('maestra-status').style.color = '#2ea043';
-    }
+    });
+    document.getElementById('maestra-status').textContent = '● '+MAESTRA.size.toLocaleString()+' ubicaciones';
+    document.getElementById('maestra-status').style.color = '#2ea043';
   } catch(err) {
-    document.getElementById('maestra-status').textContent = '⚠ Sin maestra GitHub';
+    document.getElementById('maestra-status').textContent = '⚠ Sin maestra — '+err.message;
     document.getElementById('maestra-status').style.color = '#d29922';
-    console.warn('Maestra no cargada desde GitHub:', err.message);
+    console.warn('Maestra:', err);
   }
 
+  // ── Load Stock from GitHub ──
   try {
-    // Load stock
     document.getElementById('upload-status').textContent = '⏳ Cargando stock…';
-    const stockRows = await fetchXlsxFromGitHub(githubRaw(STOCK_FILE));
-    if (stockRows.length && stockRows[0].hasOwnProperty('almacen')) {
-      LAST_STOCK_ROWS = stockRows;
-      document.getElementById('upload-status').textContent = '● ' + stockRows.length.toLocaleString() + ' filas — ' + STOCK_FILE;
-      mergeAndRender(stockRows);
-    } else {
-      throw new Error('Formato no reconocido');
-    }
+    const stockRows = await fetchXlsxFromGitHub(STOCK_FILE);
+    if (!stockRows.length || !stockRows[0].hasOwnProperty('almacen'))
+      throw new Error('Formato incorrecto');
+    LAST_STOCK_ROWS = stockRows;
+    document.getElementById('upload-status').textContent = '● '+stockRows.length.toLocaleString()+' filas — '+STOCK_FILE;
+    mergeAndRender(stockRows);
   } catch(err) {
-    document.getElementById('upload-status').textContent = '⚠ Sin stock GitHub — usando datos embebidos';
-    console.warn('Stock no cargado desde GitHub:', err.message);
-    // Fallback: use embedded data
+    document.getElementById('upload-status').textContent = '⚠ Sin stock GitHub — datos embebidos';
+    document.getElementById('upload-status').style.color = '#d29922';
+    console.warn('Stock:', err);
+    // Fallback: embedded data
     populateFilters(RAW_DATA);
     applyFilters();
   }
