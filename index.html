@@ -200,25 +200,29 @@
 </div>
 
 <div style="display:flex;gap:12px;margin:14px 20px 0;">
-  <label class="upload-banner" for="file-maestra" style="flex:1;margin:0;border-color:#e3b341aa;">
+  <div class="upload-banner" style="flex:1;margin:0;border-color:#e3b341aa;cursor:default;">
     <span style="font-size:20px">🗂️</span>
     <div class="upload-text">
-      <strong style="color:#e3b341">1. Maestra de Ubicaciones</strong><br>
-      Carga una vez · define todas las ubicaciones válidas
+      <strong style="color:#e3b341">Maestra de Ubicaciones</strong><br>
+      Se carga automáticamente desde GitHub
     </div>
-    <span class="upload-badge" id="maestra-status" style="color:#e3b341;background:rgba(227,179,65,.1);">○ Sin maestra</span>
-  </label>
-  <label class="upload-banner" for="file-input" style="flex:1;margin:0;">
-    <span style="font-size:20px">📂</span>
+    <span class="upload-badge" id="maestra-status" style="color:#e3b341;background:rgba(227,179,65,.1);">⏳ Cargando…</span>
+  </div>
+  <div class="upload-banner" style="flex:1;margin:0;cursor:default;">
+    <span style="font-size:20px">📦</span>
     <div class="upload-text">
-      <strong>2. Stock Diario</strong><br>
-      Carga cada día · se cruza contra la maestra
+      <strong>Stock Diario</strong><br>
+      Se carga automáticamente desde GitHub
     </div>
-    <span class="upload-badge" id="upload-status">● Datos embebidos</span>
+    <span class="upload-badge" id="upload-status">⏳ Cargando…</span>
+  </div>
+  <!-- Manual override (hidden, advanced use) -->
+  <label class="upload-banner" for="file-stock-manual" style="flex:0 0 auto;margin:0;padding:12px 16px;cursor:pointer;" title="Cargar stock manual">
+    <span style="font-size:18px">📂</span>
+    <div class="upload-text" style="font-size:11px;"><strong>Stock manual</strong><br>Override local</div>
   </label>
 </div>
-<input type="file" id="file-maestra" accept=".xls,.xlsx" onchange="handleMaestraUpload(event)"/>
-<input type="file" id="file-input"   accept=".xls,.xlsx" onchange="handleFileUpload(event)"/>
+<input type="file" id="file-stock-manual" accept=".xls,.xlsx" onchange="handleFileUpload(event)" style="display:none"/>
 
 <div class="filters">
   <span class="filter-label">Filtros</span>
@@ -324,7 +328,70 @@ function fmt1(n)   { return (+n).toLocaleString('es',{minimumFractionDigits:1,ma
 function fmtPct(n) { return fmt1(n)+'%'; }
 function pct(n,t)  { return t ? +(n/t*100).toFixed(1) : 0; }
 
-window.addEventListener('DOMContentLoaded', () => { populateFilters(RAW_DATA); applyFilters(); });
+// GitHub raw URLs — must match repo structure
+const GITHUB_USER = 'rodrigoinv';
+const GITHUB_REPO = 'kpi';
+const GITHUB_BRANCH = 'main';
+const MAESTRA_FILE = 'Maestra.xlsx';
+const STOCK_FILE   = 'stock.xlsx';
+
+function githubRaw(filename) {
+  return `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${filename}`;
+}
+
+async function fetchXlsxFromGitHub(url) {
+  const res = await fetch(url + '?t=' + Date.now()); // cache-bust
+  if (!res.ok) throw new Error(`HTTP ${res.status} al cargar ${url}`);
+  const buf = await res.arrayBuffer();
+  const wb  = XLSX.read(buf, {type:'array'});
+  const ws  = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(ws, {raw:true});
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
+  // Try to auto-load from GitHub
+  try {
+    // Load maestra
+    document.getElementById('maestra-status').textContent = '⏳ Cargando maestra…';
+    const maestraRows = await fetchXlsxFromGitHub(githubRaw(MAESTRA_FILE));
+    if (maestraRows.length && maestraRows[0].hasOwnProperty('almacen')) {
+      MAESTRA.clear();
+      maestraRows.forEach(r => {
+        const key = [String(r.almacen),String(r.estante),String(r.columna),String(r.nivel)].join('|');
+        if (!MAESTRA.has(key)) MAESTRA.set(key, {
+          almacen:String(r.almacen), estante:String(r.estante),
+          columna:String(r.columna), nivel:String(r.nivel),
+          categoria_ubicacion:r.categoria_ubicacion||''
+        });
+      });
+      document.getElementById('maestra-status').textContent = '● ' + MAESTRA.size.toLocaleString() + ' ubicaciones';
+      document.getElementById('maestra-status').style.color = '#2ea043';
+    }
+  } catch(err) {
+    document.getElementById('maestra-status').textContent = '⚠ Sin maestra GitHub';
+    document.getElementById('maestra-status').style.color = '#d29922';
+    console.warn('Maestra no cargada desde GitHub:', err.message);
+  }
+
+  try {
+    // Load stock
+    document.getElementById('upload-status').textContent = '⏳ Cargando stock…';
+    const stockRows = await fetchXlsxFromGitHub(githubRaw(STOCK_FILE));
+    if (stockRows.length && stockRows[0].hasOwnProperty('almacen')) {
+      LAST_STOCK_ROWS = stockRows;
+      document.getElementById('upload-status').textContent = '● ' + stockRows.length.toLocaleString() + ' filas — ' + STOCK_FILE;
+      mergeAndRender(stockRows);
+    } else {
+      throw new Error('Formato no reconocido');
+    }
+  } catch(err) {
+    document.getElementById('upload-status').textContent = '⚠ Sin stock GitHub — usando datos embebidos';
+    console.warn('Stock no cargado desde GitHub:', err.message);
+    // Fallback: use embedded data
+    populateFilters(RAW_DATA);
+    applyFilters();
+  }
+});
 
 function populateFilters(data) {
   const almacenes = [...new Set(data.map(r=>r.almacen))].sort();
