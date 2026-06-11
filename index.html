@@ -336,20 +336,12 @@ const MAESTRA_FILE  = 'Maestra.xlsx';
 const STOCK_FILE    = 'stock.xlsx';
 
 async function fetchXlsxFromGitHub(filename) {
-  // Use GitHub Contents API — returns base64 encoded file, no CORS issues
-  const apiUrl = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${filename}?ref=${GITHUB_BRANCH}`;
-  const res = await fetch(apiUrl, {
-    headers: { 'Accept': 'application/vnd.github.v3+json' }
-  });
-  if (!res.ok) throw new Error(`GitHub API: HTTP ${res.status} para ${filename}`);
-  const json = await res.json();
-  if (!json.content) throw new Error(`Sin contenido en ${filename}`);
-  // Decode base64 → binary → XLSX
-  const b64 = json.content.replace(/\n/g, '');
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  const wb = XLSX.read(bytes, {type: 'array'});
+  // jsDelivr proxies GitHub without CORS, supports files up to 50MB
+  const url = `https://cdn.jsdelivr.net/gh/${GITHUB_USER}/${GITHUB_REPO}@${GITHUB_BRANCH}/${filename}`;
+  const res = await fetch(url + '?t=' + Date.now());
+  if (!res.ok) throw new Error(`HTTP ${res.status} para ${filename}`);
+  const buf = await res.arrayBuffer();
+  const wb = XLSX.read(new Uint8Array(buf), {type: 'array'});
   const ws = wb.Sheets[wb.SheetNames[0]];
   return XLSX.utils.sheet_to_json(ws, {raw: true});
 }
