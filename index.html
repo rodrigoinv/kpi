@@ -357,11 +357,24 @@ function parseCSV(text) {
 }
 
 async function fetchCSV(url) {
-  // Use allorigins proxy to avoid CORS on Google Sheets
-  const proxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url) + '&t=' + Date.now();
-  const res = await fetch(proxy);
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return parseCSV(await res.text());
+  // Try Google Sheets direct first (works when published correctly)
+  // then fallback to proxy
+  const attempts = [
+    url + '&t=' + Date.now(),
+    'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+    'https://corsproxy.io/?' + encodeURIComponent(url),
+  ];
+  let lastErr;
+  for (const u of attempts) {
+    try {
+      const res = await fetch(u);
+      if (res.ok) {
+        const text = await res.text();
+        if (text.includes(',')) return parseCSV(text);
+      }
+    } catch(e) { lastErr = e; }
+  }
+  throw new Error('No se pudo cargar el sheet: ' + (lastErr?.message||'error'));
 }
 
 async function fetchMaestra() {
