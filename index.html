@@ -832,9 +832,14 @@ function mergeAndRender(rows){
 
 // ── BUILD ONE LOCATION RECORD ──
 function buildLocationRecord(loc, stockRows){
-  // CSV returns strings — coerce to numbers
-  const totalPallets=stockRows.reduce((s,r)=>s+(parseFloat(r.pallets)||0),0);
-  const totalStock  =stockRows.reduce((s,r)=>s+(parseFloat(r.ubcstk)||0),0);
+  // CSV returns strings — handle both comma and dot as decimal separator
+  function toNum(v) {
+    if (v === undefined || v === null || v === '') return 0;
+    const s = String(v).trim().replace(/\.(?=\d{3}(,|$))/g,'').replace(',','.');
+    return parseFloat(s) || 0;
+  }
+  const totalPallets=stockRows.reduce((s,r)=>s+toNum(r.pallets),0);
+  const totalStock  =stockRows.reduce((s,r)=>s+toNum(r.ubcstk),0);
   const skuSet=new Set(stockRows.map(r=>r.ubprod).filter(Boolean));
   const pctVal=+Math.min(100,totalPallets*100).toFixed(1);
   const ubesta=stockRows.length>0?(stockRows[0].ubesta||'S'):'L';
