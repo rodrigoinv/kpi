@@ -832,10 +832,38 @@ function mergeAndRender(rows){
 
 // ── BUILD ONE LOCATION RECORD ──
 function buildLocationRecord(loc, stockRows){
-  // CSV returns strings — handle both comma and dot as decimal separator
+  // CSV returns strings — handle Google Sheets locale formats
+  // e.g. "20,408,163" = 0.20408163 (dot=thousands, comma=decimal)
+  // e.g. "0.20408163" = 0.20408163 (standard)
+  // e.g. "0,20408163" = 0.20408163 (comma decimal)
   function toNum(v) {
     if (v === undefined || v === null || v === '') return 0;
-    const s = String(v).trim().replace(/\.(?=\d{3}(,|$))/g,'').replace(',','.');
+    let s = String(v).trim();
+    if (s === '') return 0;
+    // Count dots and commas
+    const dots   = (s.match(/\./g)||[]).length;
+    const commas = (s.match(/,/g)||[]).length;
+    if (dots > 1) {
+      // dots are thousands separators: "20.408.163" → remove dots, comma→dot
+      s = s.replace(/\./g,'').replace(',','.');
+    } else if (commas > 1) {
+      // commas are thousands separators: "20,408,163" → remove commas
+      s = s.replace(/,/g,'');
+    } else if (dots === 1 && commas === 1) {
+      // both present — determine which is decimal by position
+      const dotPos   = s.lastIndexOf('.');
+      const commaPos = s.lastIndexOf(',');
+      if (commaPos > dotPos) {
+        // comma is decimal: "20.408,163" → "20408.163"
+        s = s.replace(/\./g,'').replace(',','.');
+      } else {
+        // dot is decimal: "20,408.163" → "20408.163"
+        s = s.replace(/,/g,'');
+      }
+    } else if (commas === 1 && dots === 0) {
+      // only comma — it's decimal separator: "0,2041" → "0.2041"
+      s = s.replace(',','.');
+    }
     return parseFloat(s) || 0;
   }
   const totalPallets=stockRows.reduce((s,r)=>s+toNum(r.pallets),0);
