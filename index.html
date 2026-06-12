@@ -259,6 +259,8 @@
     </div>
   </div>
   <div id="semaforo-container"></div>
+
+  <div style="margin-top:24px;padding:10px 14px;border-radius:6px;background:rgba(255,255,255,.04);border:1px solid var(--border);font-size:11px;color:var(--text2);display:flex;align-items:center;gap:8px;">⚠️ <span>Este reporte <strong style="color:var(--text)">no contiene mercadería en tránsito de ingreso ni de despacho.</strong></span></div>
 </div>
 
 <!-- KPIs -->
@@ -278,6 +280,8 @@
       </div>
     </div>
   </div>
+
+  <div style="margin-top:24px;padding:10px 14px;border-radius:6px;background:rgba(255,255,255,.04);border:1px solid var(--border);font-size:11px;color:var(--text2);display:flex;align-items:center;gap:8px;">⚠️ <span>Este reporte <strong style="color:var(--text)">no contiene mercadería en tránsito de ingreso ni de despacho.</strong></span></div>
 </div>
 
 <!-- HEATMAP -->
@@ -293,6 +297,8 @@
     </div>
     <div id="heatmap-container"></div>
   </div>
+
+  <div style="margin-top:24px;padding:10px 14px;border-radius:6px;background:rgba(255,255,255,.04);border:1px solid var(--border);font-size:11px;color:var(--text2);display:flex;align-items:center;gap:8px;">⚠️ <span>Este reporte <strong style="color:var(--text)">no contiene mercadería en tránsito de ingreso ni de despacho.</strong></span></div>
 </div>
 
 <!-- TABLA -->
@@ -312,6 +318,7 @@
     <span class="pg-info" id="tabla-pg-info"></span>
     <button class="pg-btn" id="tabla-next" onclick="tablaPage(1)">Sig. →</button>
   </div>
+  <div style="margin-top:24px;padding:10px 14px;border-radius:6px;background:rgba(255,255,255,.04);border:1px solid var(--border);font-size:11px;color:var(--text2);display:flex;align-items:center;gap:8px;">⚠️ <span>Este reporte <strong style="color:var(--text)">no contiene mercadería en tránsito de ingreso ni de despacho.</strong></span></div>
 </div>
 
 <script>
@@ -508,7 +515,7 @@ function renderKpiMini() {
     {label:'Media',             val:c.MEDIA.toLocaleString(),   sub:fmtPct(pct(c.MEDIA,total)),color:'var(--media)'},
     {label:'Llenas',            val:c.LLENA.toLocaleString(),   sub:fmtPct(pct(c.LLENA,total)),color:'var(--llena)'},
     {label:'Multi-SKU',         val:multi.toLocaleString(),     sub:'ubicaciones mixtas',       color:'#e3b341'},
-    {label:'Total Pallets',     val:fmt1(totalP),               sub:'suma ponderada',           color:'var(--accent)'},
+    {label:'Total Pallets',     val:Math.round(totalP).toLocaleString('es'), sub:'suma ponderada', color:'var(--accent)'},
   ];
   document.getElementById('kpi-mini').innerHTML=kpis.map(k=>`
     <div class="kpi-card" style="--card-color:${k.color}">
@@ -832,39 +839,29 @@ function mergeAndRender(rows){
 
 // ── BUILD ONE LOCATION RECORD ──
 function buildLocationRecord(loc, stockRows){
-  // CSV returns strings — handle Google Sheets locale formats
-  // e.g. "20,408,163" = 0.20408163 (dot=thousands, comma=decimal)
-  // e.g. "0.20408163" = 0.20408163 (standard)
-  // e.g. "0,20408163" = 0.20408163 (comma decimal)
+  // Google Sheets mangles Excel pallet fractions when pasting:
+  // 0.006666667 becomes "6,666,667.00" (×1e9), 0.01875 → "1,875.00" (×1e5), 0.25 → "25.00" (×100)
+  // Scale depends on digit count of the inflated integer value.
   function toNum(v) {
     if (v === undefined || v === null || v === '') return 0;
     let s = String(v).trim();
-    if (s === '') return 0;
-    // Count dots and commas
-    const dots   = (s.match(/\./g)||[]).length;
-    const commas = (s.match(/,/g)||[]).length;
-    if (dots > 1) {
-      // dots are thousands separators: "20.408.163" → remove dots, comma→dot
-      s = s.replace(/\./g,'').replace(',','.');
-    } else if (commas > 1) {
-      // commas are thousands separators: "20,408,163" → remove commas
-      s = s.replace(/,/g,'');
-    } else if (dots === 1 && commas === 1) {
-      // both present — determine which is decimal by position
-      const dotPos   = s.lastIndexOf('.');
-      const commaPos = s.lastIndexOf(',');
-      if (commaPos > dotPos) {
-        // comma is decimal: "20.408,163" → "20408.163"
-        s = s.replace(/\./g,'').replace(',','.');
-      } else {
-        // dot is decimal: "20,408.163" → "20408.163"
-        s = s.replace(/,/g,'');
-      }
-    } else if (commas === 1 && dots === 0) {
-      // only comma — it's decimal separator: "0,2041" → "0.2041"
-      s = s.replace(',','.');
+    if (!s) return 0;
+    // "0,xx" → comma is decimal separator
+    if (s.startsWith('0,')) return parseFloat(s.replace(',','.')) || 0;
+    // Remove thousand separators (commas)
+    s = s.replace(/,/g,'');
+    // Strip trailing .00 or .000 etc
+    if (s.includes('.')) {
+      const [ip, dp] = s.split('.');
+      if (!dp || dp.replace(/0/g,'') === '') s = ip;
     }
-    return parseFloat(s) || 0;
+    const n = parseFloat(s) || 0;
+    if (n <= 1) return n;
+    // Scale back based on digit count (Excel→Sheets inflation pattern)
+    const digits = String(Math.floor(n)).length;
+    if (digits <= 2) return n / 1e2;   // 25 → 0.25
+    if (digits <= 4) return n / 1e5;   // 1875 → 0.01875
+    return n / 1e9;                     // 6666667 → 0.006666667
   }
   const totalPallets=stockRows.reduce((s,r)=>s+toNum(r.pallets),0);
   const totalStock  =stockRows.reduce((s,r)=>s+toNum(r.ubcstk),0);
